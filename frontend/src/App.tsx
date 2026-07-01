@@ -72,7 +72,7 @@ export default function App() {
             }
             await triggerAutomaticSearch(decodedText);
           },
-          (_errorMessage) => {
+          (errorMessage) => {
             // Tarama sırasında sürekli tetiklenen logları buraya yazabilirsiniz (Genelde boş bırakılır)
           },
         );
