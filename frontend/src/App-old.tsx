@@ -1,5 +1,6 @@
 import { Html5QrcodeScanner } from "html5-qrcode";
-import { useEffect, useState, useRef } from "react"; // Çift import teke düşürüldü
+import { useEffect, useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface InventoryItem {
   id: string;
@@ -10,6 +11,9 @@ interface InventoryItem {
   quantity: number;
 }
 
+// ⚠️ BURAYA KENDİ BİLGİSAYARININ IP ADRESİNİ YAZ (Örn: http://192.168.1.35:5000/api)
+// Eğer tarayıcıda "localhost" üzerinden açtıysan otomatik bilgisayarı (localhost) görsün,
+// telefondan açtıysan kendi IP adresini (192.168.0.117) kullansın:
 const API_BASE_URL =
   window.location.hostname === "localhost"
     ? "http://localhost:5000/api"
@@ -22,17 +26,18 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [successMsg, setSuccessMsg] = useState<string>("");
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+
+  // Aktif Sekme Yönetimi: 'entry' (Giriş) veya 'analysis' (Takip/Analiz)
   const [activeTab, setActiveTab] = useState<"entry" | "analysis">("entry");
 
-  // Kamera Aktiflik Kontrolü
-  const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
-
+  // Form Alanları State'leri
   const [formBarcode, setFormBarcode] = useState<string>("");
   const [formName, setFormName] = useState<string>("");
   const [formCategory, setFormCategory] = useState<string>("Kühlschrank");
   const [formExpiry, setFormExpiry] = useState<string>("");
   const [formQuantity, setFormQuantity] = useState<number>(1);
 
+  // 🔍 Filtreleme ve Sıralama State'leri (Analiz Sekmesi İçin)
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [sortBy, setSortBy] = useState<
@@ -40,52 +45,11 @@ export default function App() {
   >("expiry_asc");
 
   const barcodeRef = useRef<HTMLInputElement>(null);
-  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
 
   useEffect(() => {
     barcodeRef.current?.focus();
     fetchInventory();
   }, []);
-
-  // 📷 Kamera Tarayıcı Yönetimi
-  useEffect(() => {
-    if (activeTab === "entry" && isCameraOpen) {
-      // DOM elementinin renderlandığından emin olmak için kısa bir timeout
-      const timer = setTimeout(() => {
-        scannerRef.current = new Html5QrcodeScanner(
-          "reader",
-          {
-            fps: 10,
-            qrbox: { width: 250, height: 150 }, // Dikdörtgen barkodlar için ideal kutu boyutu
-            rememberLastUsedCamera: true,
-          },
-          /* verbose= */ false,
-        );
-
-        scannerRef.current.render(
-          async (decodedText) => {
-            // Başarılı Tarama: Input'u doldur, kamerayı kapat ve API'ye istek at
-            setBarcodeInput(decodedText);
-            setIsCameraOpen(false);
-            if (scannerRef.current) {
-              scannerRef.current.clear().catch((err) => console.error(err));
-            }
-            await triggerAutomaticSearch(decodedText);
-          },
-          (errorMessage) => {
-            // Tarama sırasında sürekli tetiklenen logları buraya yazabilirsiniz (Genelde boş bırakılır)
-          },
-        );
-      }, 100);
-
-      return () => {
-        clearTimeout(timer);
-        if (scannerRef.current) {
-          scannerRef.current.clear().catch((err) => console.error(err));
-        }
-      };
-    }
-  }, [isCameraOpen, activeTab]);
 
   const fetchInventory = async () => {
     try {
@@ -97,14 +61,16 @@ export default function App() {
     }
   };
 
-  // Kameradan gelen metin için manuel formu tetikleme fonksiyonu
-  const triggerAutomaticSearch = async (barcode: string) => {
-    if (!barcode.trim()) return;
+  // Barkod Taratıldığında Tetiklenen Arama
+  const handleBarcodeSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!barcodeInput.trim()) return;
+
     setErrorMsg("");
     setSuccessMsg("");
 
     try {
-      const res = await fetch(`${API_BASE_URL}/products/${barcode}`);
+      const res = await fetch(`${API_BASE_URL}/products/${barcodeInput}`);
       const result = await res.json();
 
       if (result.success) {
@@ -113,26 +79,17 @@ export default function App() {
         setFormCategory(result.data.category || "Kühlschrank");
         setFormExpiry("");
         setFormQuantity(1);
-      } else {
-        // Ürün bulunamadıysa yeni barkodu forma direkt basıp kullanıcının doldurmasını kolaylaştıralım
-        setFormBarcode(barcode);
-        setFormName("");
-        setErrorMsg("Ürün veritabanında bulunamadı, lütfen manuel ekleyin.");
       }
     } catch (err) {
       setErrorMsg("Sunucu bağlantı hatası!");
     }
   };
 
-  const handleBarcodeSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await triggerAutomaticSearch(barcodeInput);
-  };
-
+  // Envantere Kaydetme (POST)
   const handleSaveToInventory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formBarcode || !formExpiry || formQuantity < 1) {
-      setErrorMsg("Lütfen Barkod, SKT ve Adet alanlarını doldurun!");
+      setErrorMsg("Lütfen Barkod, SKT ve Adet alanurlarını doldurun!");
       return;
     }
 
@@ -153,6 +110,7 @@ export default function App() {
       if (result.success) {
         setSuccessMsg("Ürün envantere başarıyla işlendi!");
         setInventory(result.data);
+        // Formu sıfırla
         setFormBarcode("");
         setFormName("");
         setFormCategory("Kühlschrank");
@@ -166,9 +124,11 @@ export default function App() {
     }
   };
 
+  // 📊 Veri Analitiği: Filtreleme ve Sıralama Motoru (Anlık Çalışır)
   const getProcessedInventory = () => {
     let processed = [...inventory];
 
+    // 1. Arama Filtresi (Ürün adı veya Barkoda göre)
     if (searchTerm.trim() !== "") {
       const term = searchTerm.toLowerCase();
       processed = processed.filter(
@@ -178,28 +138,30 @@ export default function App() {
       );
     }
 
+    // 2. Kategori Filtresi
     if (categoryFilter !== "All") {
       processed = processed.filter((item) => item.category === categoryFilter);
     }
 
+    // 3. Sıralama (Sort) Mantığı
     processed.sort((a, b) => {
       if (sortBy === "expiry_asc") {
         return (
           new Date(a.expiration_date).getTime() -
           new Date(b.expiration_date).getTime()
-        );
+        ); // En yakın SKT üste
       }
       if (sortBy === "expiry_desc") {
         return (
           new Date(b.expiration_date).getTime() -
           new Date(a.expiration_date).getTime()
-        );
+        ); // En uzak SKT üste
       }
       if (sortBy === "qty_desc") {
-        return b.quantity - a.quantity;
+        return b.quantity - a.quantity; // En çok adet üste
       }
       if (sortBy === "name_asc") {
-        return a.product_name.localeCompare(b.product_name);
+        return a.product_name.localeCompare(b.product_name); // İsim sırasına göre (A-Z)
       }
       return 0;
     });
@@ -229,10 +191,7 @@ export default function App() {
           📥 Ürün Kayıt
         </button>
         <button
-          onClick={() => {
-            setActiveTab("analysis");
-            setIsCameraOpen(false); // Sekme değiştiğinde kamerayı kapat
-          }}
+          onClick={() => setActiveTab("analysis")}
           className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === "analysis" ? "bg-indigo-600 text-white shadow" : "text-gray-600 hover:text-gray-900"}`}
         >
           🔍 Envanter & Filtreleme ({inventory.length})
@@ -244,32 +203,9 @@ export default function App() {
         {activeTab === "entry" && (
           <>
             <section className="bg-white p-5 rounded-xl shadow-md">
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                  1. Barkod Okut / Yaz
-                </h2>
-
-                {/* 📸 Kamera Aç/Kapat Butonu */}
-                <button
-                  type="button"
-                  onClick={() => setIsCameraOpen(!isCameraOpen)}
-                  className={`text-xs px-2 py-1 rounded font-medium shadow-sm transition-colors ${
-                    isCameraOpen
-                      ? "bg-red-500 text-white"
-                      : "bg-gray-800 text-white hover:bg-gray-700"
-                  }`}
-                >
-                  {isCameraOpen ? "✖ Kamerayı Kapat" : "📷 Kamerayı Aç"}
-                </button>
-              </div>
-
-              {/* Kamera Container Alanı */}
-              {isCameraOpen && (
-                <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-black">
-                  <div id="reader" className="w-full"></div>
-                </div>
-              )}
-
+              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                1. Barkod Okut / Yaz
+              </h2>
               <form onSubmit={handleBarcodeSearch} className="flex gap-2">
                 <input
                   ref={barcodeRef}
@@ -281,12 +217,11 @@ export default function App() {
                 />
                 <button
                   type="submit"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700"
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium"
                 >
                   Bul
                 </button>
               </form>
-
               {errorMsg && (
                 <div className="mt-2 text-xs text-red-600 bg-red-50 p-2 rounded">
                   {errorMsg}
@@ -393,6 +328,7 @@ export default function App() {
           <section className="bg-white p-5 rounded-xl shadow-md border-t-4 border-indigo-500">
             {/* Filtre Kontrol Paneli */}
             <div className="space-y-3 bg-gray-50 p-3 rounded-lg mb-4 text-xs">
+              {/* Arama Çubuğu */}
               <div>
                 <input
                   type="text"
@@ -404,6 +340,7 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
+                {/* Kategori Filtresi */}
                 <div>
                   <label className="block text-[10px] font-bold text-gray-500 mb-1 uppercase">
                     Kategori Seç
@@ -421,6 +358,7 @@ export default function App() {
                   </select>
                 </div>
 
+                {/* Sıralama (Sort) Kriteri */}
                 <div>
                   <label className="block text-[10px] font-bold text-gray-500 mb-1 uppercase">
                     Sıralama Ölçütü
@@ -447,6 +385,7 @@ export default function App() {
                 </p>
               ) : (
                 getProcessedInventory().map((item) => {
+                  // SKT kontrolü yaparak rengi dinamik değiştirelim (Örn: Süresi geçmiş veya bugünse kırmızı şerit)
                   const isExpired =
                     new Date(item.expiration_date) <= new Date();
 
