@@ -1,5 +1,5 @@
-import { Html5QrcodeScanner } from "html5-qrcode";
-import { useEffect, useState, useRef } from "react"; // Çift import teke düşürüldü
+import { useEffect, useState, useRef } from "react";
+import BarcodeScanner from "react-qr-barcode-scanner";
 
 interface InventoryItem {
   id: string;
@@ -24,15 +24,17 @@ export default function App() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [activeTab, setActiveTab] = useState<"entry" | "analysis">("entry");
 
-  // Kamera Aktiflik Kontrolü
+  // 📷 Kamera Aktiflik State'i
   const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
 
+  // Form Alanları State'leri
   const [formBarcode, setFormBarcode] = useState<string>("");
   const [formName, setFormName] = useState<string>("");
   const [formCategory, setFormCategory] = useState<string>("Kühlschrank");
   const [formExpiry, setFormExpiry] = useState<string>("");
   const [formQuantity, setFormQuantity] = useState<number>(1);
 
+  // Filtreleme ve Sıralama State'leri
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [sortBy, setSortBy] = useState<
@@ -40,81 +42,11 @@ export default function App() {
   >("expiry_asc");
 
   const barcodeRef = useRef<HTMLInputElement>(null);
-  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
 
   useEffect(() => {
     barcodeRef.current?.focus();
     fetchInventory();
   }, []);
-
-  // 📷 Kamera Tarayıcı Yönetimi (Düzeltilmiş ve Kararlı Versiyon)
-  useEffect(() => {
-    let isMounted = true;
-
-    if (activeTab === "entry" && isCameraOpen) {
-      // DOM elementinin (reader) render edildiğinden emin olmak için daha güvenli bir yöntem
-      const checkAndStartScanner = () => {
-        const element = document.getElementById("reader");
-        if (!element) {
-          // Element henüz DOM'da değilse 100ms sonra tekrar dene
-          setTimeout(checkAndStartScanner, 100);
-          return;
-        }
-
-        if (!isMounted) return;
-
-        try {
-          // Eğer önceden kalan eski bir tarayıcı varsa temizle
-          if (scannerRef.current) {
-            scannerRef.current.clear().catch(() => {});
-          }
-
-          // Yeni tarayıcıyı başlat
-          scannerRef.current = new Html5QrcodeScanner(
-            "reader",
-            {
-              fps: 15, // Tarama hızını biraz artırdık
-              qrbox: { width: 260, height: 160 }, // Standart barkodlar için ideal dikdörtgen oran
-              rememberLastUsedCamera: true,
-              // Doğrudan telefonun arka (environment) kamerasını zorunlu kılıyoruz:
-              videoConstraints: {
-                facingMode: "environment",
-              },
-            },
-            /* verbose= */ false,
-          );
-
-          scannerRef.current.render(
-            async (decodedText) => {
-              setBarcodeInput(decodedText);
-              setIsCameraOpen(false);
-              if (scannerRef.current) {
-                await scannerRef.current
-                  .clear()
-                  .catch((err) => console.error(err));
-              }
-              await triggerAutomaticSearch(decodedText);
-            },
-            (_errorMessage) => {
-              // TypeScript hatası vermemesi için _errorMessage olarak güncellendi
-            },
-          );
-        } catch (err) {
-          console.error("Tarayıcı başlatma hatası:", err);
-        }
-      };
-
-      // İlk tetiklemeyi başlat
-      checkAndStartScanner();
-    }
-
-    return () => {
-      isMounted = false;
-      if (scannerRef.current) {
-        scannerRef.current.clear().catch((err) => console.error(err));
-      }
-    };
-  }, [isCameraOpen, activeTab]);
 
   const fetchInventory = async () => {
     try {
@@ -126,7 +58,6 @@ export default function App() {
     }
   };
 
-  // Kameradan gelen metin için manuel formu tetikleme fonksiyonu
   const triggerAutomaticSearch = async (barcode: string) => {
     if (!barcode.trim()) return;
     setErrorMsg("");
@@ -143,10 +74,9 @@ export default function App() {
         setFormExpiry("");
         setFormQuantity(1);
       } else {
-        // Ürün bulunamadıysa yeni barkodu forma direkt basıp kullanıcının doldurmasını kolaylaştıralım
         setFormBarcode(barcode);
         setFormName("");
-        setErrorMsg("Ürün veritabanında bulunamadı, lütfen manuel ekleyin.");
+        setErrorMsg("Ürün veritabanında bulunamadı, lütfen kendiniz doldurun.");
       }
     } catch (err) {
       setErrorMsg("Sunucu bağlantı hatası!");
@@ -260,7 +190,7 @@ export default function App() {
         <button
           onClick={() => {
             setActiveTab("analysis");
-            setIsCameraOpen(false); // Sekme değiştiğinde kamerayı kapat
+            setIsCameraOpen(false); // Sekme değiştiğinde kamerayı kapatır
           }}
           className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === "analysis" ? "bg-indigo-600 text-white shadow" : "text-gray-600 hover:text-gray-900"}`}
         >
@@ -278,31 +208,10 @@ export default function App() {
                   1. Barkod Okut / Yaz
                 </h2>
 
-                {/* 📸 Kamera Aç/Kapat Butonu */}
+                {/* 📷 Yeni Nesil Kamera Aç/Kapat Butonu */}
                 <button
                   type="button"
-                  onClick={async () => {
-                    if (!isCameraOpen) {
-                      try {
-                        // Tarayıcıya "Ben kesinlikle kamera kullanmak istiyorum" uyarısı gönderir
-                        // Bu kod çalışınca telefon ekranında "Kameraya izin verilsin mi?" pop-up'ı zorunlu olarak çıkar.
-                        const stream =
-                          await navigator.mediaDevices.getUserMedia({
-                            video: true,
-                          });
-                        // İzin alındıktan sonra kamerayı kapatıyoruz ki html5-qrcode kendisi açabilsin
-                        stream.getTracks().forEach((track) => track.stop());
-                        setIsCameraOpen(true);
-                      } catch (err) {
-                        setErrorMsg(
-                          "Kamera izni reddedildi veya cihazda kamera bulunamadı!",
-                        );
-                        console.error("Kamera erişim hatası:", err);
-                      }
-                    } else {
-                      setIsCameraOpen(false);
-                    }
-                  }}
+                  onClick={() => setIsCameraOpen(!isCameraOpen)}
                   className={`text-xs px-2 py-1 rounded font-medium shadow-sm transition-colors ${
                     isCameraOpen
                       ? "bg-red-500 text-white"
@@ -313,10 +222,23 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Kamera Container Alanı */}
+              {/* 🎥 Kararlı Canlı Kamera Tarama Alanı */}
               {isCameraOpen && (
-                <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-black">
-                  <div id="reader" className="w-full"></div>
+                <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-black min-h-[250px] flex items-center justify-center relative">
+                  <BarcodeScanner
+                    width="100%"
+                    height={250}
+                    onUpdate={(err, result) => {
+                      if (result) {
+                        const scannedCode = result.getText();
+                        setBarcodeInput(scannedCode);
+                        setIsCameraOpen(false); // Okunduğu an kamerayı kapat
+                        triggerAutomaticSearch(scannedCode); // Otomatik ara
+                      }
+                    }}
+                  />
+                  {/* Ekran ortasında hizalama rehberi çizgisi */}
+                  <div className="absolute left-0 right-0 top-1/2 border-t-2 border-red-500 opacity-60 pointer-events-none"></div>
                 </div>
               )}
 
@@ -350,7 +272,7 @@ export default function App() {
             </section>
 
             {formBarcode && (
-              <section className="bg-white p-5 rounded-xl shadow-md border-t-4 border-blue-500 animate-fadeIn">
+              <section className="bg-white p-5 rounded-xl shadow-md border-t-4 border-blue-500">
                 <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
                   2. Detayları Doldur
                 </h2>
