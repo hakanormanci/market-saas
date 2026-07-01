@@ -47,44 +47,73 @@ export default function App() {
     fetchInventory();
   }, []);
 
-  // 📷 Kamera Tarayıcı Yönetimi
+  // 📷 Kamera Tarayıcı Yönetimi (Düzeltilmiş ve Kararlı Versiyon)
   useEffect(() => {
+    let isMounted = true;
+
     if (activeTab === "entry" && isCameraOpen) {
-      // DOM elementinin renderlandığından emin olmak için kısa bir timeout
-      const timer = setTimeout(() => {
-        scannerRef.current = new Html5QrcodeScanner(
-          "reader",
-          {
-            fps: 10,
-            qrbox: { width: 250, height: 150 }, // Dikdörtgen barkodlar için ideal kutu boyutu
-            rememberLastUsedCamera: true,
-          },
-          /* verbose= */ false,
-        );
+      // DOM elementinin (reader) render edildiğinden emin olmak için daha güvenli bir yöntem
+      const checkAndStartScanner = () => {
+        const element = document.getElementById("reader");
+        if (!element) {
+          // Element henüz DOM'da değilse 100ms sonra tekrar dene
+          setTimeout(checkAndStartScanner, 100);
+          return;
+        }
 
-        scannerRef.current.render(
-          async (decodedText) => {
-            // Başarılı Tarama: Input'u doldur, kamerayı kapat ve API'ye istek at
-            setBarcodeInput(decodedText);
-            setIsCameraOpen(false);
-            if (scannerRef.current) {
-              scannerRef.current.clear().catch((err) => console.error(err));
-            }
-            await triggerAutomaticSearch(decodedText);
-          },
-          (_errorMessage) => {
-            // Tarama sırasında sürekli tetiklenen logları buraya yazabilirsiniz (Genelde boş bırakılır)
-          },
-        );
-      }, 100);
+        if (!isMounted) return;
 
-      return () => {
-        clearTimeout(timer);
-        if (scannerRef.current) {
-          scannerRef.current.clear().catch((err) => console.error(err));
+        try {
+          // Eğer önceden kalan eski bir tarayıcı varsa temizle
+          if (scannerRef.current) {
+            scannerRef.current.clear().catch(() => {});
+          }
+
+          // Yeni tarayıcıyı başlat
+          scannerRef.current = new Html5QrcodeScanner(
+            "reader",
+            {
+              fps: 15, // Tarama hızını biraz artırdık
+              qrbox: { width: 260, height: 160 }, // Standart barkodlar için ideal dikdörtgen oran
+              rememberLastUsedCamera: true,
+              // Doğrudan telefonun arka (environment) kamerasını zorunlu kılıyoruz:
+              videoConstraints: {
+                facingMode: "environment",
+              },
+            },
+            /* verbose= */ false,
+          );
+
+          scannerRef.current.render(
+            async (decodedText) => {
+              setBarcodeInput(decodedText);
+              setIsCameraOpen(false);
+              if (scannerRef.current) {
+                await scannerRef.current
+                  .clear()
+                  .catch((err) => console.error(err));
+              }
+              await triggerAutomaticSearch(decodedText);
+            },
+            (_errorMessage) => {
+              // TypeScript hatası vermemesi için _errorMessage olarak güncellendi
+            },
+          );
+        } catch (err) {
+          console.error("Tarayıcı başlatma hatası:", err);
         }
       };
+
+      // İlk tetiklemeyi başlat
+      checkAndStartScanner();
     }
+
+    return () => {
+      isMounted = false;
+      if (scannerRef.current) {
+        scannerRef.current.clear().catch((err) => console.error(err));
+      }
+    };
   }, [isCameraOpen, activeTab]);
 
   const fetchInventory = async () => {
