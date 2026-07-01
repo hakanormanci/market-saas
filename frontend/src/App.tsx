@@ -15,7 +15,9 @@ interface InventoryItem {
 const API_BASE_URL =
   window.location.hostname === "localhost"
     ? "http://localhost:5000/api"
-    : "http://192.168.0.117:5000/api";
+    : window.location.hostname.includes("vercel.app")
+      ? "https://market-saas.onrender.com/api"
+      : "http://192.168.0.117:5000/api";
 
 export default function App() {
   const [barcodeInput, setBarcodeInput] = useState<string>("");
