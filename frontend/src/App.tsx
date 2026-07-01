@@ -72,7 +72,7 @@ export default function App() {
             }
             await triggerAutomaticSearch(decodedText);
           },
-          (errorMessage) => {
+          (_errorMessage) => {
             // Tarama sırasında sürekli tetiklenen logları buraya yazabilirsiniz (Genelde boş bırakılır)
           },
         );
@@ -252,7 +252,28 @@ export default function App() {
                 {/* 📸 Kamera Aç/Kapat Butonu */}
                 <button
                   type="button"
-                  onClick={() => setIsCameraOpen(!isCameraOpen)}
+                  onClick={async () => {
+                    if (!isCameraOpen) {
+                      try {
+                        // Tarayıcıya "Ben kesinlikle kamera kullanmak istiyorum" uyarısı gönderir
+                        // Bu kod çalışınca telefon ekranında "Kameraya izin verilsin mi?" pop-up'ı zorunlu olarak çıkar.
+                        const stream =
+                          await navigator.mediaDevices.getUserMedia({
+                            video: true,
+                          });
+                        // İzin alındıktan sonra kamerayı kapatıyoruz ki html5-qrcode kendisi açabilsin
+                        stream.getTracks().forEach((track) => track.stop());
+                        setIsCameraOpen(true);
+                      } catch (err) {
+                        setErrorMsg(
+                          "Kamera izni reddedildi veya cihazda kamera bulunamadı!",
+                        );
+                        console.error("Kamera erişim hatası:", err);
+                      }
+                    } else {
+                      setIsCameraOpen(false);
+                    }
+                  }}
                   className={`text-xs px-2 py-1 rounded font-medium shadow-sm transition-colors ${
                     isCameraOpen
                       ? "bg-red-500 text-white"
