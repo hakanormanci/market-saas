@@ -76,6 +76,14 @@ export default function App() {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
+        videoRef.current.playsInline = true;
+
+        try {
+          await videoRef.current.play();
+        } catch (playError) {
+          console.warn("Video oynatılamadı, ancak akış bağlandı:", playError);
+        }
       }
       setIsCameraOpen(true);
 
@@ -106,6 +114,10 @@ export default function App() {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.srcObject = null;
     }
     setIsCameraOpen(false);
   };
