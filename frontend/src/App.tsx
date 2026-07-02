@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { Html5QrcodeScanner, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
 interface InventoryItem {
   id: string;
@@ -23,11 +24,10 @@ export default function App() {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [activeTab, setActiveTab] = useState<"entry" | "analysis">("entry");
 
-  // 📷 Kamera ve Video Akış Yönetimi
+  // 📷 Kamera ve Barkod Tarayıcı Yönetimi
   const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const scanIntervalRef = useRef<number | null>(null);
+  const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const scannerContainerRef = useRef<HTMLDivElement>(null);
 
   // Form Alanları State'leri
   const [formBarcode, setFormBarcode] = useState<string>("");
@@ -48,7 +48,9 @@ export default function App() {
   useEffect(() => {
     barcodeRef.current?.focus();
     fetchInventory();
-    return () => stopCamera(); // Bileşen kapanırsa kamerayı mutlaka kapat
+    return () => {
+      void stopCamera();
+    };
   }, []);
 
   const fetchInventory = async () => {
@@ -61,94 +63,105 @@ export default function App() {
     }
   };
 
+  const handleScanSuccess = async (decodedText: string) => {
+    const cleanedCode = decodedText.trim();
+    if (!cleanedCode) return;
+
+    setBarcodeInput(cleanedCode);
+    setSuccessMsg("Barkod algılandı. Ürün bilgileri getiriliyor...");
+    await stopCamera();
+    await triggerAutomaticSearch(cleanedCode);
+  };
+
+  const handleScanFailure = () => {
+    // Barkod bulunamadığında sessizce devam et.
+  };
+
+  useEffect(() => {
+    if (!isCameraOpen) {
+      return;
+    }
+
+    let isMounted = true;
+
+    const initializeScanner = async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+      if (!isMounted || !scannerContainerRef.current || scannerRef.current) {
+        return;
+      }
+
+      try {
+        const scanner = new Html5QrcodeScanner(
+          scannerContainerRef.current,
+          {
+            fps: 10,
+            qrbox: { width: 260, height: 260 },
+            aspectRatio: 1.0,
+            disableFlip: false,
+            formatsToSupport: [
+              Html5QrcodeSupportedFormats.EAN_13,
+              Html5QrcodeSupportedFormats.EAN_8,
+              Html5QrcodeSupportedFormats.CODE_128,
+              Html5QrcodeSupportedFormats.QR_CODE,
+            ],
+          },
+          false,
+        );
+
+        scannerRef.current = scanner;
+        await scanner.render(handleScanSuccess, handleScanFailure);
+      } catch (err) {
+        console.error("Kamera açma hatası:", err);
+        if (isMounted) {
+          setIsCameraOpen(false);
+          setErrorMsg(
+            "Kameraya erişilemedi! Lütfen tarayıcı izinlerini kontrol edin.",
+          );
+        }
+      }
+    };
+
+    void initializeScanner();
+
+    return () => {
+      isMounted = false;
+      void stopCamera();
+    };
+  }, [isCameraOpen]);
+
   // 🎥 Kamerayı Başlatma Fonksiyonu
   const startCamera = async () => {
     setErrorMsg("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
 
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.muted = true;
-        videoRef.current.playsInline = true;
-
-        try {
-          await videoRef.current.play();
-        } catch (playError) {
-          console.warn("Video oynatılamadı, ancak akış bağlandı:", playError);
-        }
-      }
-      setIsCameraOpen(true);
-
-      // Tarayıcının yerleşik Barkod Dedektörü var mı kontrol et (Chrome/Safari güncel sürümlerde destekler)
-      // Eğer desteklemiyorsa kullanıcıya manuel giriş uyarısı verir ama beyaz ekran yapmaz!
-      if (!("BarcodeDetector" in window)) {
-        console.warn(
-          "Tarayıcı yerleşik BarcodeDetector desteklemiyor. Fotoğraf çekme moduna geçiliyor.",
-        );
-      }
-
-      // Her 300ms'de bir video karesini tarayan döngüyü başlat
-      startScanningLoop();
-    } catch (err) {
-      console.error("Kamera açma hatası:", err);
-      setErrorMsg(
-        "Kameraya erişilemedi! Lütfen ayarlardan izin verdiğinizden emin olun.",
-      );
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErrorMsg("Bu tarayıcı kamera erişimini desteklemiyor.");
+      return;
     }
+
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.clear();
+      } catch (err) {
+        console.warn("Eski tarayıcı temizlenemedi:", err);
+      }
+      scannerRef.current = null;
+    }
+
+    setIsCameraOpen(true);
   };
 
   // 🛑 Kamerayı Kapatma Fonksiyonu
-  const stopCamera = () => {
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.srcObject = null;
+  const stopCamera = async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.clear();
+      } catch (err) {
+        console.warn("Kamera kapatılırken temizleme hatası:", err);
+      }
+      scannerRef.current = null;
     }
     setIsCameraOpen(false);
-  };
-
-  // 🔍 Canlı Tarama Döngüsü (Kütüphanesiz Saf JS)
-  const startScanningLoop = () => {
-    if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
-
-    scanIntervalRef.current = window.setInterval(async () => {
-      if (!videoRef.current || !streamRef.current) return;
-
-      // Tarayıcı destekliyorsa yerleşik dedektörü çalıştır
-      if ("BarcodeDetector" in window) {
-        try {
-          // @ts-ignore (TypeScript tanımı olmayan deneysel API'ler için bypass)
-          const barcodeDetector = new window.BarcodeDetector({
-            formats: ["ean_13", "ean_8", "qr_code", "code_128"],
-          });
-          const barcodes = await barcodeDetector.detect(videoRef.current);
-
-          if (barcodes && barcodes.length > 0) {
-            const code = barcodes[0].rawValue;
-            setBarcodeInput(code);
-            stopCamera(); // Kodu bulunca kamerayı kapat
-            await triggerAutomaticSearch(code);
-          }
-        } catch (e) {
-          // Tarama hatası (büyük ihtimalle o karede barkod yok)
-        }
-      }
-    }, 300);
   };
 
   const triggerAutomaticSearch = async (barcode: string) => {
@@ -304,7 +317,13 @@ export default function App() {
                 {/* 📷 Saf Kamera Aç/Kapat Butonu */}
                 <button
                   type="button"
-                  onClick={() => (isCameraOpen ? stopCamera() : startCamera())}
+                  onClick={() => {
+                    if (isCameraOpen) {
+                      void stopCamera();
+                    } else {
+                      void startCamera();
+                    }
+                  }}
                   className={`text-xs px-2 py-1 rounded font-medium shadow-sm transition-colors ${
                     isCameraOpen
                       ? "bg-red-500 text-white"
@@ -318,14 +337,11 @@ export default function App() {
               {/* 🎥 Kütüphanesiz, Çökmeyen Video Alanı */}
               {isCameraOpen && (
                 <div className="mb-3 overflow-hidden rounded-lg border border-gray-200 bg-black min-h-[250px] flex items-center justify-center relative">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-[250px] object-cover"
+                  <div
+                    ref={scannerContainerRef}
+                    id="reader"
+                    className="w-full h-[250px]"
                   />
-                  {/* Ekran ortasında kırmızı hedef çizgisi */}
                   <div className="absolute left-0 right-0 top-1/2 border-t-2 border-red-500 opacity-60 pointer-events-none"></div>
                 </div>
               )}
